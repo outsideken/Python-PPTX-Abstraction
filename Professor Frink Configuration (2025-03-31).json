@@ -1,0 +1,39 @@
+{
+  "Filename": "Dr Frink.pptx",
+  "Slide 01": {
+    "Slide Template": 6,
+    "Slide Name": "Dr. Frink",
+
+    "Objects": {
+      "Title Config": {
+        "Add?": true,
+        "Text": "Professor John I.Q. Nerdelbaum Frink Jr.",
+        "left": 1.5,
+        "top": 0.3,
+        "width": 8.5,
+        "height": 0.5,
+        "Align": "center",
+        "Font Name": "Calibri",
+        "Font Size": 28,
+        "Font Color": "#535353",
+        "Bold?": true,
+        "Italic?": false,
+        "Word Wrap?": true,
+        "Fill Color": null,
+        "Fill Alpha": 0.99,
+        "Line Color": "#535353",
+        "Line Width": 0,
+        "Line Style": "-"
+      },
+      "Image Config": {
+        "Add?": true,
+        "img_path": "img/simpsons/Dr_Frink.png",
+        "Preserve Aspect Ratio?": true,
+        "left": 3.8,
+        "top": 1.33,
+        "width": 2.4,
+        "height": 4.84
+      }
+    }
+  }
+}
