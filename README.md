@@ -3,7 +3,7 @@
 **References:**
 * [python-pptx Documentation](https://python-pptx.readthedocs.io/en/latest/index.html)
 
-### This Python script uses the `python-pptx` library to automate the creation of PowerPoint presentations. This workflow uses abstraction and a configuration dictionart to add PowerPoint slide objects to a slide. The script currently supports adding:
+### This Python script uses the `python-pptx` library to automate the creation of PowerPoint presentations. This workflow uses abstraction and configuration dictionaries to create PowerPoint slide decks. The Python script currently supports adding:
 
 * Auto Shapes
 * Connectors
@@ -11,31 +11,41 @@
 * Tables
 * Text Boxes
 
-Other preformatted objects can be added as well within this workflow:
+### Other preformatted objects can be added as well within this workflow:
 
 * Slide Titles
-* Security Banners
+* Banners
 * Bulleted Lists
-* Schedule Table
 
-Users can define the Presentation Aspect Ratio of On-Screen (4:3) or Widescreen (16:9) via the python script. Slide layouts and object properties can be defined in the `slide_config` dictionary. The python script processes these configurations to place objects on the slide consistent the user-defined formatting, saving the result as a `.pptx` file.
+Users can define the Presentation Aspect Ratio  (On-Screen (4:3) or Widescreen (16:9)) and add metadata to the slide via the python script. Slide layouts, object properties, and metadata can be defined in the `slide_config` dictionary. The python script processes these configurations to place objects on the slide consistent the user-defined formatting, saving the result as a `.pptx` file.
 
-As this is an early version, users can modify the `slide_config` dictionary with slide names and object configurations, leveraging the `get_default_config` function for quick setup. For example:
+* Author
+* Created
+* Description
+* Title
+* Subject
+* Comments
+* Keywords
+* Category
+*  Last Modified by
+*  Modified
+
+The `slide_config` dictionary can be modified to add slides and object configurations leveraging the `get_default_config` function for a quick setup. For example:
 
 ```python
     
     {"Slide Template": 6, ## Add a blank slide to the Presentation 
 
      ## Add a Title - a formatted Text object
-     "Title Config": get_default_config("Title", {"text": "Professor John I.Q. Nerdelbaum Frink Jr."}),
+     "Title Config": get_default_config("Title", {"text": "Professor Hubert J. Farnsworth"}),
 
      ## Add an Image
-     "Image Config": get_default_config("Image", {"img_path": "img/simpsons/Dr_Frink.png"})}
+     "Image Config": get_default_config("Image", {"img_path": "img/FuturamaProfessorFarnsworth.png"})}
     
 ```
 which creates the slide below:
 
-<center><img src="img/Slide Example - Professor Frink.png"></center>
+<center><img src="img/FuturamaProfessorFarnsworth.png"></center>
 
 The configuration dictionary follows the format of:
 
