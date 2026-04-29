@@ -70,42 +70,44 @@ from pptx_functions import build_presentation, get_default_config
 
 # ── Step 1: Define the template once ────────────────────────────────────────
 # Formatting is fully specified. Content fields are intentionally empty.
+# This template never changes — only the content fields get filled each week.
 
 template = {
     "Details": {
         "Author":             "B. Rodriguez",
-        "Filename":           "weekly_summary.pptx",
+        "Filename":           "mission_briefing.pptx",
         "Slide Aspect Ratio": "16:9",
         "Slide Width & Height": [13.33, 7.5],
     },
     "Slides": {
         "Slide 01": {
             "Slide Template":   6,
-            "Background Color": "#1a1a2e",
+            "Background Color": "#0d1b2a",  # deep space navy
             "Background Alpha": 0.0,
             "Objects": {
                 "Banner": get_default_config("Banner", {
-                    "Text":       "UNCLASSIFIED",
+                    "Text":       "PLANET EXPRESS — FOR EXTERNAL USE ONLY",
                     "Font Color": "#ffffff",
-                    "Fill Color": "#007a33",
+                    "Fill Color": "#6a0572",
                 }),
                 "Title": get_default_config("Title", {
                     "Text":       "",           # ← content: LLM fills this
-                    "Font Color": "#ffffff",
+                    "Font Color": "#f5c518",
                 }),
-                "Summary": get_default_config("Text", {
+                "Briefing": get_default_config("Text", {
                     "Text":      "",            # ← content: LLM fills this
-                    "left": 0.5, "top": 1.2, "width": 6.0, "height": 4.5,
+                    "left": 0.5, "top": 1.2, "width": 5.8, "height": 4.5,
                     "Font Color": "#cccccc", "Font Size": 12, "Align": "left",
                 }),
-                "Activity Table": get_default_config("Table", {
-                    "Column Headers": ["Location", "Date", "Activity", "Confidence"],
+                "Mission Log": get_default_config("Table", {
+                    "Column Headers": ["Destination", "Date", "Cargo", "Danger Level"],
                     "Row Data":       [],        # ← content: LLM fills this
                     "Columns": 4, "Rows": 0,
-                    "Column Widths": [2.5, 1.5, 4.5, 1.8],
-                    "left": 6.8, "top": 1.2, "width": 6.0, "height": 4.5,
+                    "Column Widths": [2.8, 1.4, 4.3, 1.8],
+                    "left": 6.8, "top": 1.2, "width": 10.3, "height": 4.5,
                     "Cell Styles": {
-                        (0, 3): {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
+                        (0, 3): {"Font Color": "#f5c518", "Fill Color": "#0d1b2a"},
+                        # row danger-level cells styled by the LLM workflow
                     },
                 }),
             },
@@ -114,29 +116,32 @@ template = {
 }
 
 # ── Step 2: Prompt an LLM for content ───────────────────────────────────────
-# The prompt describes only the content schema.  Example:
+# The prompt gives the LLM only the content schema — no PowerPoint knowledge
+# required.  Example prompt:
 #
-#   Return a JSON object with exactly these fields, populated from the data
-#   below.  Do not add or rename fields.
+#   You are Professor Hubert J. Farnsworth briefing the Planet Express crew.
+#   Return a JSON object with exactly these fields. Do not add or rename them.
 #
 #   {
-#     "title":   "<slide title including the reporting date>",
-#     "summary": "<2–3 sentence narrative summary of key findings>",
-#     "rows":    [["<location>", "<date>", "<activity>", "<High|Medium|Low>"], ...]
+#     "title":   "<briefing title in Farnsworth's voice, including the stardate>",
+#     "briefing": "<2–3 sentences in Farnsworth's voice — start with 'Good news, everyone!'
+#                  Mention that at least one crew member will probably die.>",
+#     "rows":    [["<destination>", "<stardate>", "<cargo>", "<High|Medium|Low>"], ...]
 #   }
 #
-#   Data: [your source data here]
+#   Mission data: [your source data here]
 
-# LLM returns — no PowerPoint knowledge required:
+# LLM returns — no python-pptx knowledge required:
 llm_output = {
-    "title":   "Weekly Activity Summary — 29 APR 2026",
-    "summary": "Three locations reported elevated activity this week. "
-               "Grid 38SMB shows continued vehicle movement consistent with "
-               "prior pattern-of-life.  Two new nodes identified in AO.",
+    "title":   "Planet Express Weekly Mission Briefing — Stardate 29 APR 3000",
+    "briefing": "Good news, everyone!  I've assigned you three new deliveries "
+                "to destinations that will, in all likelihood, result in at least "
+                "one of your deaths.  The good news is I have no strong "
+                "attachment to any of you.  Now stop touching my things.",
     "rows": [
-        ["Grid 38SMB", "29 APR 26", "Vehicle movement",   "High"],
-        ["Grid 38SNC", "28 APR 26", "Signal intercept",   "Medium"],
-        ["Grid 38SMD", "27 APR 26", "Personnel activity", "Low"],
+        ["Omicron Persei 8",  "29 APR 3000", "1 can of anchovies (urgent)",      "High"],
+        ["Robot Hell",        "30 APR 3000", "Bender's soul (retrieve, again)",  "Medium"],
+        ["Planet Nude Beach", "01 MAY 3000", "Swimsuit calendars — rush order",  "Low"],
     ],
 }
 
@@ -144,14 +149,23 @@ llm_output = {
 slide_config = deepcopy(template)
 objs = slide_config["Slides"]["Slide 01"]["Objects"]
 
-objs["Title"]["Text"]                = llm_output["title"]
-objs["Summary"]["Text"]              = llm_output["summary"]
-objs["Activity Table"]["Row Data"]   = llm_output["rows"]
-objs["Activity Table"]["Rows"]       = len(llm_output["rows"])
+objs["Title"]["Text"]              = llm_output["title"]
+objs["Briefing"]["Text"]           = llm_output["briefing"]
+objs["Mission Log"]["Row Data"]    = llm_output["rows"]
+objs["Mission Log"]["Rows"]        = len(llm_output["rows"])
+
+# Colour-code the Danger Level column based on the LLM's values
+danger_colors = {"High": "#cb181d", "Medium": "#e6a817", "Low": "#007a33"}
+for i, row in enumerate(llm_output["rows"], start=1):
+    danger = row[3]
+    objs["Mission Log"]["Cell Styles"][(i, 3)] = {
+        "Font Color": danger_colors.get(danger, "#535353"),
+        "Bold?": True,
+    }
 
 # ── Step 4: Build ────────────────────────────────────────────────────────────
 prs = build_presentation(slide_config)
-prs.save("weekly_summary.pptx")
+prs.save("mission_briefing.pptx")
 ```
 
 The template lives in a JSON file or a version-controlled Python module.
