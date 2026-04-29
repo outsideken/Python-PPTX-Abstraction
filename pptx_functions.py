@@ -14,7 +14,7 @@ Quick start
 >>> from datetime import datetime, timezone
 >>> slide_config = {
 ...     "Details": {
-...         "Author": "K. Chadwick",
+...         "Author": "B. Rodriguez",
 ...         "Filename": "test.pptx",
 ...         "Slide Aspect Ratio": "16:9",
 ...         "Slide Width & Height": [13.33, 7.5],
@@ -382,7 +382,7 @@ def create_slide_deck(
 
     Examples
     --------
-    >>> details = {"Slide Width & Height": [13.33, 7.5], "Author": "K. Chadwick"}
+    >>> details = {"Slide Width & Height": [13.33, 7.5], "Author": "B. Rodriguez"}
     >>> prs = create_slide_deck(details)
     """
     prs = Presentation()
