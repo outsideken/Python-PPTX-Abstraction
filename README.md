@@ -67,12 +67,7 @@ import pptx_functions               # also available as pptx_functions.show_func
 ## Quick Start
 
 ```python
-from pptx_functions import (
-    create_slide_deck, get_default_config,
-    OBJECT_TYPE_HANDLERS, color_to_rgb
-)
-from pptx.dml.color import RGBColor
-from datetime import datetime, timezone
+from pptx_functions import build_presentation, get_default_config
 
 # ── 1. Define the slide deck ─────────────────────────────────────────────────
 slide_config = {
@@ -104,32 +99,9 @@ slide_config = {
     },
 }
 
-# ── 2. Create the presentation ───────────────────────────────────────────────
-config_details = slide_config["Details"]
-prs = create_slide_deck(config_details, verbose=True)
-
-# ── 3. Build slides ──────────────────────────────────────────────────────────
-for slide_name, config in slide_config["Slides"].items():
-    layout = prs.slide_layouts[config.get("Slide Template", 6)]
-    slide  = prs.slides.add_slide(layout)
-
-    # Background colour
-    fill = slide.background.fill
-    fill.solid()
-    r, g, b = color_to_rgb(config.get("Background Color", "#ffffff"))
-    fill.fore_color.rgb          = RGBColor(r, g, b)
-    fill.fore_color.transparency = config.get("Background Alpha", 0.0)
-
-    # Add objects
-    for key, elem_config in config["Objects"].items():
-        if elem_config.get("Add?", False):
-            obj_type = elem_config.get("Object Type", "")
-            handler  = OBJECT_TYPE_HANDLERS.get(obj_type)
-            if handler:
-                handler(slide, elem_config)
-
-# ── 4. Save ───────────────────────────────────────────────────────────────────
-prs.save(config_details["Filename"])
+# ── 2. Build and save ────────────────────────────────────────────────────────
+prs = build_presentation(slide_config, verbose=True)
+prs.save(slide_config["Details"]["Filename"])
 ```
 
 ---
@@ -279,9 +251,9 @@ per-indent sizing:
     "Type":        "straight",      # "straight" | "elbow" | "curved"
     "Start X": 0.5, "Start Y": 1.0,
     "End X":   12.8, "End Y":  1.0,
-    "Color":   "#535353",
-    "Width":   1.5,
-    "Style":   "-",                 # see show_dash_styles()
+    "Line Color": "#535353",
+    "Line Width": 1.5,
+    "Line Style": "-",              # see show_dash_styles()
 }
 ```
 
@@ -321,6 +293,12 @@ per-indent sizing:
     "Font Color": "#252525",
     "Align":      "center",
     "V-Align":    "middle",
+    "Cell Styles": {                 # optional per-cell overrides
+        (0, 3): {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
+        (1, 3): {"Font Color": "#007a33", "Bold?": True},  # High → green
+        (2, 3): {"Font Color": "#e6a817", "Bold?": True},  # Medium → amber
+        (3, 3): {"Font Color": "#cb181d", "Bold?": True},  # Low → red
+    },
 }
 ```
 
@@ -382,19 +360,34 @@ show_dash_styles()     # solid, dash, dash dot, round dot, ...
 
 ## Function Reference
 
+**High-level API**
+
+| Function | Description |
+|---|---|
+| `build_presentation(slide_config, verbose=False)` | Build a complete Presentation from a `slide_config` dict. |
+| `dispatch_objects(slide, objects_config)` | Render all enabled objects from an `"Objects"` config dict. |
+
+**PPTX Object Functions**
+
 | Function | Description |
 |---|---|
 | `create_slide_deck(config_details, verbose=False)` | Create a new Presentation with slide dimensions and metadata. |
+| `set_slide_background(slide, config)` | Apply background colour and transparency to a slide. |
 | `add_autoshape(slide, config)` | Add an auto shape. |
 | `add_connector(slide, config)` | Add a connector line. |
 | `add_image(slide, config)` | Add an image with aspect-ratio handling. |
 | `add_notes(slide, note_text)` | Write text to the slide Notes pane. |
 | `add_shape_formatting(shape, config)` | Apply line and fill formatting to a shape. |
-| `add_table(slide, config)` | Add a formatted table. |
-| `add_textbox(slide, config)` | Add a text box (plain, multi-run, or bulleted). |
+| `add_table(slide, config)` | Add a formatted table with optional per-cell styling. |
+| `add_textbox(slide, config)` | Add a text box (plain, multi-paragraph, multi-run, or bulleted). |
 | `add_text_formatting(run, config)` | Apply font formatting to a text run. |
 | `add_banners(slide, config)` | Add top and bottom marking banners. |
 | `add_header(slide, config)` | Add a title + connector + seal image header. |
+
+**Helpers & Utilities**
+
+| Function | Description |
+|---|---|
 | `get_default_config(object_type, overrides)` | Return a deep-copied default config. |
 | `apply_metadata(core_props, metadata_dict)` | Apply document metadata. |
 | `color_to_rgb(color)` | Convert HEX or CSS name to (R, G, B) tuple. |

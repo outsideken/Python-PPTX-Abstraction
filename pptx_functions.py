@@ -42,18 +42,23 @@ Utilities
 
 PPTX Object Functions
     create_slide_deck       Create a new Presentation with configured dimensions and metadata.
+    set_slide_background    Apply background colour and transparency to a slide.
     add_autoshape           Add an auto shape to a slide.
     add_connector           Add a connector line to a slide.
     add_image               Add an image with smart aspect-ratio handling.
     add_notes               Write text to the Notes pane of a slide.
     add_shape_formatting    Apply line and fill formatting to any shape.
-    add_table               Add a formatted table to a slide.
-    add_textbox             Add a text box (plain, multi-run, or bulleted).
+    add_table               Add a formatted table with optional per-cell styling.
+    add_textbox             Add a text box (plain, multi-paragraph, multi-run, or bulleted).
     add_text_formatting     Apply font formatting to a text run or paragraph.
 
 Wrapper Functions
     add_banners             Add top and bottom classification/marking banners to a slide.
     add_header              Add a slide header (title text box, connector, and seal images).
+
+High-level API
+    dispatch_objects        Render all enabled objects from an "Objects" config dict.
+    build_presentation      Build a complete Presentation from a slide_config dict.
 
 Helper Functions
     get_default_config      Return a deep-copied default config for a named object type.
@@ -73,18 +78,20 @@ Data
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__  = "KChadwick"
 
 __all__ = [
     # utilities
     "get_image_details", "color_to_rgb", "extract_ltwh",
     # pptx object functions
-    "create_slide_deck",
+    "create_slide_deck", "set_slide_background",
     "add_autoshape", "add_connector", "add_image", "add_notes",
     "add_shape_formatting", "add_table", "add_textbox", "add_text_formatting",
     # wrapper functions
     "add_banners", "add_header",
+    # high-level API
+    "dispatch_objects", "build_presentation",
     # helper functions
     "get_default_config", "apply_metadata",
     "show_functions", "show_autoshapes", "show_object_alignment",
@@ -316,6 +323,33 @@ def extract_ltwh(config: Dict[str, Any]) -> List:
 # PPTX OBJECT FUNCTIONS
 ################################################################################
 
+def _get_slide_size(slide: Slide) -> Tuple[float, float]:
+    """Return (width_inches, height_inches) from the slide's parent Presentation."""
+    prs = slide.part.package.presentation_part.presentation
+    return prs.slide_width.inches, prs.slide_height.inches
+
+
+def set_slide_background(slide: Slide, config: Dict[str, Any]) -> None:
+    """
+    Apply a solid background colour to a slide.
+
+    Parameters
+    ----------
+    slide : Slide
+        Target slide.
+    config : dict
+        ``"Background Color"`` (str, optional)
+            HEX or CSS colour.  Default ``"#ffffff"``.
+        ``"Background Alpha"`` (float, optional)
+            Transparency 0.0 (opaque) – 1.0 (transparent).  Default ``0.0``.
+    """
+    r, g, b = color_to_rgb(config.get("Background Color", "#ffffff"))
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb          = RGBColor(r, g, b)
+    fill.fore_color.transparency = config.get("Background Alpha", 0.0)
+
+
 def create_slide_deck(
     config_details: Dict[str, Any],
     verbose: bool = False,
@@ -424,13 +458,13 @@ def add_connector(slide: Slide, config: Dict[str, Any]) -> Connector:
     config : dict
         Configuration keys:
 
-        ``"Color"`` (str)
+        ``"Line Color"`` (str)
             Line colour as HEX or CSS name.  Default ``"#000000"``.
         ``"Start X"``, ``"Start Y"``, ``"End X"``, ``"End Y"`` (float)
             Endpoint coordinates in inches.
-        ``"Width"`` (float, optional)
+        ``"Line Width"`` (float, optional)
             Line thickness in points.  Default ``1``.
-        ``"Style"`` (str, optional)
+        ``"Line Style"`` (str, optional)
             Dash style.  Default ``"-"`` (solid).
         ``"Type"`` (str, optional)
             ``"straight"``, ``"elbow"``, or ``"curved"``.  Default ``"straight"``.
@@ -439,20 +473,21 @@ def add_connector(slide: Slide, config: Dict[str, Any]) -> Connector:
     -------
     Connector
     """
-    rgb      = color_to_rgb(config.get("Color", "#000000"))
-    start_x  = Inches(config.get("Start X", 0))
-    start_y  = Inches(config.get("Start Y", 0))
-    end_x    = Inches(config.get("End X", 0))
-    end_y    = Inches(config.get("End Y", 0))
+    # "Line Color/Width/Style" are the canonical keys; "Color/Width/Style" kept for compat
+    rgb       = color_to_rgb(config.get("Line Color", config.get("Color", "#000000")))
+    start_x   = Inches(config.get("Start X", 0))
+    start_y   = Inches(config.get("Start Y", 0))
+    end_x     = Inches(config.get("End X", 0))
+    end_y     = Inches(config.get("End Y", 0))
     conn_type = PPTX_LOOKUP["connectors"].get(
         config.get("Type", "straight"), MSO_CONNECTOR.STRAIGHT
     )
 
     line: Connector = slide.shapes.add_connector(conn_type, start_x, start_y, end_x, end_y)
     line.line.color.rgb  = RGBColor(*rgb)
-    line.line.width      = Pt(config.get("Width", 1))
+    line.line.width      = Pt(config.get("Line Width", config.get("Width", 1)))
     line.line.dash_style = PPTX_LOOKUP["dash_styles"].get(
-        config.get("Style", "-"), MSO_LINE_DASH_STYLE.SOLID
+        config.get("Line Style", config.get("Style", "-")), MSO_LINE_DASH_STYLE.SOLID
     )
     return line
 
@@ -653,6 +688,18 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
             HEX or CSS colour for cell text.
         ``"Bold?"`` (bool, optional)
             ``True`` bolds all cells; header row is bold by default.
+        ``"Cell Styles"`` (dict, optional)
+            Per-cell formatting overrides.  Keys are ``(row_index, col_index)``
+            tuples (0-based, header row = 0).  Values are config dicts with any
+            combination of ``"Font Color"``, ``"Font Size"``, ``"Bold?"``,
+            ``"Italic?"``, ``"Underline?"``, ``"Fill Color"``, ``"Align"``.
+
+            Example::
+
+                "Cell Styles": {
+                    (0, 2): {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
+                    (2, 3): {"Font Color": "#cb181d", "Bold?": True},
+                }
 
     Returns
     -------
@@ -662,7 +709,7 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
     rows_count = config.get("Rows", 0) + 1
     cols_count = config.get("Columns", 0)
 
-    shape       = slide.shapes.add_table(rows_count, cols_count, left, top, width, height)
+    shape        = slide.shapes.add_table(rows_count, cols_count, left, top, width, height)
     table: Table = shape.table
 
     for idx, col_w in enumerate(config.get("Column Widths", [])):
@@ -672,9 +719,10 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
     for row in table.rows:
         row.height = Inches(config.get("Row Height", 0.4))
 
-    align_key  = config.get("Align", "left").lower()
-    valign_key = config.get("V-Align", "middle").lower()
-    full_data  = [config.get("Column Headers", [])] + config.get("Row Data", [])
+    align_key   = config.get("Align", "left").lower()
+    valign_key  = config.get("V-Align", "middle").lower()
+    full_data   = [config.get("Column Headers", [])] + config.get("Row Data", [])
+    cell_styles = config.get("Cell Styles", {})
 
     for row_idx, row_values in enumerate(full_data):
         for col_idx, cell_value in enumerate(row_values):
@@ -684,14 +732,26 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
             cell.vertical_anchor = PPTX_LOOKUP["valign"].get(
                 valign_key, MSO_VERTICAL_ANCHOR.MIDDLE
             )
+
+            # Merge base config with any per-cell overrides
+            override    = cell_styles.get((row_idx, col_idx), {})
+            merged      = {**config, "Bold?": config.get("Bold?", row_idx == 0), **override}
+            cell_align  = PPTX_LOOKUP["align"].get(
+                merged.get("Align", align_key).lower(), PP_ALIGN.LEFT
+            )
+
+            # Cell background fill
+            if "Fill Color" in override:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor(*color_to_rgb(override["Fill Color"]))
+
             tf = cell.text_frame
             tf.clear()
-            p = tf.add_paragraph()
-            p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.LEFT)
-            run = p.add_run()
-            run.text = str(cell_value)
-            is_header = row_idx == 0
-            add_text_formatting(run, {**config, "Bold?": config.get("Bold?", is_header)})
+            p           = tf.add_paragraph()
+            p.alignment = cell_align
+            run         = p.add_run()
+            run.text    = str(cell_value)
+            add_text_formatting(run, merged)
 
     return table
 
@@ -700,17 +760,21 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
     """
     Add a text box to a slide.
 
-    Supports three text modes selected automatically from the config:
+    Supports four text modes selected automatically from the config:
 
     1. **Bulleted list** — when ``"Bullets"`` is present.
        Value: ``[[text, level], ...]`` where level 0 = top level.
        ``"Font Size"`` may be a scalar or a ``[[level, size], ...]`` list.
 
-    2. **Multi-run text** — when ``"Text"`` is a ``dict``.
+    2. **Multi-paragraph** — when ``"Text"`` is a ``list``.
+       Each element is one paragraph: a ``str`` for plain text, or a
+       ``dict`` of ``{run_text: run_config}`` for mixed formatting.
+
+    3. **Multi-run text** — when ``"Text"`` is a ``dict``.
        Value: ``{run_text: {per-run overrides}, ...}``.
        Useful for mixed formatting within one paragraph (e.g. bold + colour).
 
-    3. **Plain text** — when ``"Text"`` is a ``str`` (default).
+    4. **Plain text** — when ``"Text"`` is a ``str`` (default).
 
     Parameters
     ----------
@@ -778,7 +842,22 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
             font_size  = font_size_map.get(level, default_font_size)
             add_text_formatting(run, {**config, "Font Size": font_size})
 
-    # ── Multi-run text ────────────────────────────────────────────────────────
+    # ── Multi-paragraph ───────────────────────────────────────────────────────
+    elif isinstance(config.get("Text"), list):
+        for para_content in config["Text"]:
+            p           = tf.add_paragraph()
+            p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.CENTER)
+            if isinstance(para_content, dict):
+                for text, run_config in para_content.items():
+                    run      = p.add_run()
+                    run.text = text
+                    add_text_formatting(run, {**config, **run_config})
+            else:
+                run      = p.add_run()
+                run.text = str(para_content)
+                add_text_formatting(run, config)
+
+    # ── Multi-run text (single paragraph) ────────────────────────────────────
     elif isinstance(config.get("Text"), dict):
         p           = tf.add_paragraph()
         p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.CENTER)
@@ -849,18 +928,16 @@ def add_banners(slide: Slide, config: Dict[str, Any]) -> None:
 
         ``"Text"`` (str)
             Banner text (e.g. ``"UNCLASSIFIED"``).
-        ``"Slide Aspect Ratio"`` (str, optional)
-            ``"16:9"`` or ``"4:3"``.  Controls slide width.  Default ``"4:3"``.
 
         All other Text config keys (``"Font Name"``, ``"Font Color"``, etc.)
-        are merged on top of the Banner defaults.
+        are merged on top of the Banner defaults.  Slide width is read
+        automatically from the slide object.
     """
-    slide_width  = 13.33 if config.get("Slide Aspect Ratio", "4:3") == "16:9" else 10.0
+    slide_width, slide_height = _get_slide_size(slide)
     banner       = deepcopy(default_configurations["Banner"])
     banner.update({k: v for k, v in config.items() if k != "Add?"})
     banner["width"] = slide_width
 
-    slide_height = 7.5
     for top in (0.0, slide_height - banner["height"]):
         cfg       = deepcopy(banner)
         cfg["top"] = top
@@ -893,7 +970,7 @@ def add_header(slide: Slide, config: Dict[str, Any]) -> None:
         ``"Add Right Image?"`` (bool, optional)
             Set ``False`` to suppress the right seal.  Default ``True``.
     """
-    slide_width = 13.33 if config.get("Slide Aspect Ratio", "4:3") == "16:9" else 10.0
+    slide_width, _ = _get_slide_size(slide)
 
     title_cfg         = deepcopy(default_configurations["Title"])
     title_cfg["Text"] = config.get("Text", "")
@@ -910,6 +987,106 @@ def add_header(slide: Slide, config: Dict[str, Any]) -> None:
 
     if config.get("Add Right Image?", True) and "Right Seal" in config:
         add_image(slide, config["Right Seal"])
+
+
+################################################################################
+# HIGH-LEVEL API
+################################################################################
+
+def dispatch_objects(slide: Slide, objects_config: Dict[str, Any]) -> None:
+    """
+    Render all enabled objects from an ``"Objects"`` config dict onto a slide.
+
+    Iterates over every entry in *objects_config*, skips any with
+    ``"Add?": False``, looks up the handler for ``"Object Type"``, and calls it.
+
+    Parameters
+    ----------
+    slide : Slide
+        Target slide.
+    objects_config : dict
+        Mapping of arbitrary object names to object config dicts, e.g.::
+
+            {
+                "Title": {"Add?": True, "Object Type": "Text", ...},
+                "Logo":  {"Add?": True, "Object Type": "Image", ...},
+                "Draft": {"Add?": False, "Object Type": "AutoShape", ...},
+            }
+    """
+    for _name, elem_config in objects_config.items():
+        if not elem_config.get("Add?", True):
+            continue
+        obj_type = elem_config.get("Object Type", "")
+        handler  = OBJECT_TYPE_HANDLERS.get(obj_type)
+        if handler:
+            handler(slide, elem_config)
+
+
+def build_presentation(
+    slide_config: Dict[str, Any],
+    verbose: bool = False,
+) -> Presentation:
+    """
+    Build a complete PowerPoint presentation from a ``slide_config`` dict.
+
+    This is the top-level entry point.  It calls :func:`create_slide_deck`,
+    iterates over every slide definition, applies the background, renders all
+    enabled objects via :func:`dispatch_objects`, and writes slide notes.
+
+    Parameters
+    ----------
+    slide_config : dict
+        Full presentation config with the following structure::
+
+            {
+                "Details": {
+                    "Author":               "...",
+                    "Title":                "...",
+                    "Filename":             "output.pptx",
+                    "Slide Aspect Ratio":   "16:9",
+                    "Slide Width & Height": [13.33, 7.5],
+                },
+                "Slides": {
+                    "Slide 01": {
+                        "Slide Template":   6,
+                        "Slide Name":       "Cover",
+                        "Slide Notes":      "Presenter notes.",
+                        "Background Color": "#ffffff",
+                        "Background Alpha": 0.0,
+                        "Objects": { ... },
+                    },
+                },
+            }
+
+    verbose : bool, optional
+        Passed through to :func:`create_slide_deck`.  Default ``False``.
+
+    Returns
+    -------
+    pptx.presentation.Presentation
+        The fully built presentation.  Call ``.save(filename)`` to write it.
+
+    Examples
+    --------
+    >>> prs = build_presentation(slide_config, verbose=True)
+    >>> prs.save(slide_config["Details"]["Filename"])
+    """
+    config_details = slide_config["Details"]
+    prs = create_slide_deck(config_details, verbose=verbose)
+
+    for slide_name, slide_cfg in slide_config.get("Slides", {}).items():
+        layout = prs.slide_layouts[slide_cfg.get("Slide Template", 6)]
+        slide  = prs.slides.add_slide(layout)
+
+        set_slide_background(slide, slide_cfg)
+
+        note_text = slide_cfg.get("Slide Notes", "")
+        if note_text:
+            add_notes(slide, note_text)
+
+        dispatch_objects(slide, slide_cfg.get("Objects", {}))
+
+    return prs
 
 
 ################################################################################
@@ -1006,6 +1183,7 @@ def show_functions() -> None:
         ],
         "PPTX Object Functions": [
             "create_slide_deck(config_details, verbose=False)",
+            "set_slide_background(slide, config)",
             "add_autoshape(slide, config)",
             "add_connector(slide, config)",
             "add_image(slide, config)",
@@ -1018,6 +1196,10 @@ def show_functions() -> None:
         "Wrapper Functions": [
             "add_banners(slide, config)",
             "add_header(slide, config)",
+        ],
+        "High-level API": [
+            "dispatch_objects(slide, objects_config)",
+            "build_presentation(slide_config, verbose=False)",
         ],
         "Helper Functions": [
             "get_default_config(object_type, overrides=None)",
@@ -1110,7 +1292,7 @@ default_configurations: Dict[str, Dict[str, Any]] = {
         "Object Type": "Connector",
         "Type":        "straight",
         "Start X": 1.5, "Start Y": 1.0, "End X": 8.5, "End Y": 1.0,
-        "Color":  "#535353", "Width": 2, "Style": "-",
+        "Line Color": "#535353", "Line Width": 2, "Line Style": "-",
     },
 
     "Image": {
