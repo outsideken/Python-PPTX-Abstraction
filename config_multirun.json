@@ -1,12 +1,12 @@
 {
   "Details": {
     "Author":               "K. Chadwick",
-    "Title":                "Professor Frink",
+    "Title":                "Multi-Run Text Demo",
     "Subject":              "pptx_functions Workflow Demo",
     "Comments":             "Generated programmatically using pptx_functions",
-    "Keywords":             "pptx, simpsons, frink",
+    "Keywords":             "pptx, simpsons, multi-run",
     "Category":             "Workflow Automation",
-    "Filename":             "DEMO - Professor Frink (%s).pptx",
+    "Filename":             "DEMO - Multi-Run Text (%s).pptx",
     "Slide Aspect Ratio":   "4:3",
     "Slide Width & Height": [10.0, 7.5]
   },
@@ -31,6 +31,25 @@
           "Font Size":   28,
           "Font Color":  "#535353",
           "Bold?":       true,
+          "Italic?":     false,
+          "Word Wrap?":  true,
+          "Fill Color":  null,
+          "Fill Alpha":  1.0,
+          "Line Color":  null,
+          "Line Width":  0,
+          "Line Style":  "-"
+        },
+
+        "Status Line": {
+          "Add?":        true,
+          "Object Type": "Text",
+          "Text":        {},
+          "left": 1.0, "top": 6.35, "width": 8.0, "height": 0.7,
+          "Align":       "center",
+          "Font Name":   "Calibri",
+          "Font Size":   16,
+          "Font Color":  "#535353",
+          "Bold?":       false,
           "Italic?":     false,
           "Word Wrap?":  true,
           "Fill Color":  null,

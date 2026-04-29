@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 
 # Jupyter
+*.ipynb
 .ipynb_checkpoints/
 
 # Generated PPTX files
