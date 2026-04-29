@@ -4,46 +4,175 @@
 ![python-pptx](https://img.shields.io/badge/python--pptx-0.6%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-A Python abstraction layer for programmatic PowerPoint slide generation using
-[python-pptx](https://python-pptx.readthedocs.io/en/latest/index.html).
+A Python library that separates **slide formatting** from **slide content** — so
+you can define your visual style once and regenerate your deck as many times as
+you need, with fresh data.
 
 ---
 
-## The Problem with Manual Slides
+## The Core Idea
 
-Building PowerPoint slides by hand is slow, inconsistent, and impossible to
-automate.  Copying formatting between slides, adjusting positions pixel by
-pixel, and regenerating decks every time the data changes — all of it is
-time that should be spent on analysis, not slide assembly.
+Every data-driven slide deck has two concerns:
 
-**pptx_functions** replaces that workflow with a single Python dictionary.
-Define your slide content and layout in a `slide_config` dict, call one
-function per slide object, and get a pixel-perfect `.pptx` file every time.
-The same config can be regenerated with updated data in seconds.
+**Style** — background colours, fonts, positions, column widths, border styles.
+This is your house style. It changes rarely, maybe never.
+
+**Content** — titles, body text, table rows, bullet points, image paths.
+This is your data. It changes every time.
+
+Most tools force you to write both in the same place.  `pptx_functions`
+separates them.
+
+You define your slide layout once as a Python dictionary — the **template**.
+Then you fill in the content fields (plain strings, lists, and paths) and call
+`build_presentation()`.  Every run produces a visually identical slide with
+fresh data.
+
+```
+Template (formatting, fixed)  +  Content (data, changes)  →  .pptx
+```
 
 ---
 
-## What It Does
+## Why a Dictionary?
 
+The `slide_config` dictionary is the interface between your data and your
+slides.  Every object on every slide — text boxes, tables, images, connectors —
+is a plain dict with human-readable keys.
+
+Because the keys are self-documenting (`"Font Color"`, `"Row Data"`,
+`"Bullets"`), you can hand the content fields to **anything that can populate a
+Python dictionary**: a script that queries a database, a function that parses a
+CSV, or a large language model.
+
+The consumer of those fields never needs to know what `RGBColor` is, what
+`Inches(0.3)` means, or how python-pptx structures a table cell.  It just
+returns strings and lists.
+
+---
+
+## Using with LLMs
+
+This is where the design pays off most.  The pattern is:
+
+1. **Define a template** — all formatting fixed, content fields left empty.
+2. **Prompt an LLM** with a minimal JSON schema describing only the content
+   fields.
+3. **Inject the LLM's output** into a deep copy of the template.
+4. **Call `build_presentation()`.**
+
+The LLM never sees python-pptx.  It never touches a colour code or a pixel
+coordinate.  It only fills in the fields you ask for.
+
+```python
+from copy import deepcopy
+from pptx_functions import build_presentation, get_default_config
+
+# ── Step 1: Define the template once ────────────────────────────────────────
+# Formatting is fully specified. Content fields are intentionally empty.
+
+template = {
+    "Details": {
+        "Author":             "K. Chadwick",
+        "Filename":           "weekly_summary.pptx",
+        "Slide Aspect Ratio": "16:9",
+        "Slide Width & Height": [13.33, 7.5],
+    },
+    "Slides": {
+        "Slide 01": {
+            "Slide Template":   6,
+            "Background Color": "#1a1a2e",
+            "Background Alpha": 0.0,
+            "Objects": {
+                "Banner": get_default_config("Banner", {
+                    "Text":       "UNCLASSIFIED",
+                    "Font Color": "#ffffff",
+                    "Fill Color": "#007a33",
+                }),
+                "Title": get_default_config("Title", {
+                    "Text":       "",           # ← content: LLM fills this
+                    "Font Color": "#ffffff",
+                }),
+                "Summary": get_default_config("Text", {
+                    "Text":      "",            # ← content: LLM fills this
+                    "left": 0.5, "top": 1.2, "width": 6.0, "height": 4.5,
+                    "Font Color": "#cccccc", "Font Size": 12, "Align": "left",
+                }),
+                "Activity Table": get_default_config("Table", {
+                    "Column Headers": ["Location", "Date", "Activity", "Confidence"],
+                    "Row Data":       [],        # ← content: LLM fills this
+                    "Columns": 4, "Rows": 0,
+                    "Column Widths": [2.5, 1.5, 4.5, 1.8],
+                    "left": 6.8, "top": 1.2, "width": 6.0, "height": 4.5,
+                    "Cell Styles": {
+                        (0, 3): {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
+                    },
+                }),
+            },
+        },
+    },
+}
+
+# ── Step 2: Prompt an LLM for content ───────────────────────────────────────
+# The prompt describes only the content schema.  Example:
+#
+#   Return a JSON object with exactly these fields, populated from the data
+#   below.  Do not add or rename fields.
+#
+#   {
+#     "title":   "<slide title including the reporting date>",
+#     "summary": "<2–3 sentence narrative summary of key findings>",
+#     "rows":    [["<location>", "<date>", "<activity>", "<High|Medium|Low>"], ...]
+#   }
+#
+#   Data: [your source data here]
+
+# LLM returns — no PowerPoint knowledge required:
+llm_output = {
+    "title":   "Weekly Activity Summary — 29 APR 2026",
+    "summary": "Three locations reported elevated activity this week. "
+               "Grid 38SMB shows continued vehicle movement consistent with "
+               "prior pattern-of-life.  Two new nodes identified in AO.",
+    "rows": [
+        ["Grid 38SMB", "29 APR 26", "Vehicle movement",   "High"],
+        ["Grid 38SNC", "28 APR 26", "Signal intercept",   "Medium"],
+        ["Grid 38SMD", "27 APR 26", "Personnel activity", "Low"],
+    ],
+}
+
+# ── Step 3: Inject content into a copy of the template ──────────────────────
+slide_config = deepcopy(template)
+objs = slide_config["Slides"]["Slide 01"]["Objects"]
+
+objs["Title"]["Text"]                = llm_output["title"]
+objs["Summary"]["Text"]              = llm_output["summary"]
+objs["Activity Table"]["Row Data"]   = llm_output["rows"]
+objs["Activity Table"]["Rows"]       = len(llm_output["rows"])
+
+# ── Step 4: Build ────────────────────────────────────────────────────────────
+prs = build_presentation(slide_config)
+prs.save("weekly_summary.pptx")
 ```
-slide_config dict  →  pptx_functions  →  .pptx file
-```
 
-Each slide and each object on it is described by a plain Python dictionary.
-`pptx_functions` reads those dictionaries and calls the appropriate
-`python-pptx` API, handling coordinate conversion, colour parsing,
-aspect-ratio maths, and font formatting so you don't have to.
+The template lives in a JSON file or a version-controlled Python module.
+The content comes from wherever your data lives.  **The formatting never
+changes unless you change the template.**
 
-**Supported slide objects:**
+Run it once a week, once an hour, or on every API response — the output is
+always pixel-perfect to your spec.
+
+---
+
+## What It Supports
 
 | Object Type | Key | Description |
 |---|---|---|
-| Text box | `"Text"` | Plain text, mixed-format runs, or bulleted lists |
+| Text box | `"Text"` | Plain text, multi-paragraph, mixed-format runs, or bulleted lists |
 | Image | `"Image"` | Smart aspect-ratio handling (`fit: width / height / native`) |
 | Connector | `"Connector"` | Straight, elbow, or curved lines with dash styling |
-| Auto Shape | `"AutoShape"` | Any of 35+ MSO shapes with fill and border formatting |
-| Table | `"Table"` | Header row + data rows with per-cell font formatting |
-| Banner | `"Banner"` | Top and bottom classification/marking banners |
+| Auto Shape | `"AutoShape"` | 35+ MSO shapes with fill, transparency, and border formatting |
+| Table | `"Table"` | Header row + data rows with optional per-cell styling |
+| Banner | `"Banner"` | Top and bottom classification / marking banners |
 | Header | `"Header"` | Title text box + separator line + left/right seal images |
 
 ---
@@ -66,10 +195,11 @@ import pptx_functions               # also available as pptx_functions.show_func
 
 ## Quick Start
 
+The minimal end-to-end example:
+
 ```python
 from pptx_functions import build_presentation, get_default_config
 
-# ── 1. Define the slide deck ─────────────────────────────────────────────────
 slide_config = {
     "Details": {
         "Author":             "K. Chadwick",
@@ -80,11 +210,11 @@ slide_config = {
     },
     "Slides": {
         "Slide 01": {
-            "Slide Template":   6,          # 6 = blank slide
+            "Slide Template":   6,
             "Slide Name":       "Cover",
             "Slide Notes":      "Auto-generated.",
             "Background Color": "#ffffff",
-            "Background Alpha": 0.0,        # 0.0 = fully opaque
+            "Background Alpha": 0.0,
             "Objects": {
                 "Title": get_default_config("Title", {
                     "Text": "Professor Hubert J. Farnsworth",
@@ -99,7 +229,6 @@ slide_config = {
     },
 }
 
-# ── 2. Build and save ────────────────────────────────────────────────────────
 prs = build_presentation(slide_config, verbose=True)
 prs.save(slide_config["Details"]["Filename"])
 ```
@@ -202,6 +331,28 @@ Different fonts, sizes, and colours within a single paragraph:
 }
 ```
 
+### Text Box — multi-paragraph
+
+Each element in the list becomes its own paragraph.  Elements can be plain
+strings or mixed-format run dicts:
+
+```python
+"Analysis": {
+    "Add?":        True,
+    "Object Type": "Text",
+    "Text": [
+        "Key Judgement:  Activity levels remain elevated.",
+        {
+            "Confidence: ": {"Bold?": True, "Font Color": "#535353"},
+            "HIGH":         {"Bold?": True, "Font Color": "#007a33", "Font Size": 14},
+        },
+        "No change to recommended posture at this time.",
+    ],
+    "left": 0.5, "top": 1.2, "width": 6.0, "height": 3.0,
+    "Font Name": "Calibri", "Font Size": 11, "Font Color": "#252525", "Align": "left",
+}
+```
+
 ### Text Box — bulleted list
 
 `"Font Size"` can be a scalar or a `[[level, size], ...]` list for
@@ -212,10 +363,10 @@ per-indent sizing:
     "Add?":        True,
     "Object Type": "Text",
     "Bullets": [
-        ["Key Findings",                     0],
+        ["Key Findings",                        0],
         ["Network traffic up 23% week-on-week", 1],
         ["Three new nodes identified in AO",    1],
-        ["Pattern of Life",                  0],
+        ["Pattern of Life",                     0],
         ["Activity concentrated 0200–0600Z",    1],
     ],
     "left": 0.5, "top": 1.2, "width": 6.0, "height": 5.5,
@@ -306,13 +457,12 @@ per-indent sizing:
 
 ```python
 "Classification": {
-    "Add?":               True,
-    "Object Type":        "Banner",
-    "Text":               "UNCLASSIFIED",
-    "Slide Aspect Ratio": "16:9",   # controls slide width
-    "Font Color":         "#ffffff",
-    "Font Size":          12,
-    "Fill Color":         "#007a33",
+    "Add?":       True,
+    "Object Type": "Banner",
+    "Text":        "UNCLASSIFIED",
+    "Font Color":  "#ffffff",
+    "Font Size":   12,
+    "Fill Color":  "#007a33",
 }
 ```
 
@@ -322,7 +472,8 @@ per-indent sizing:
 
 `get_default_config(object_type, overrides)` returns a deep copy of the
 built-in defaults for any object type, with your overrides merged on top.
-Use it to avoid writing full configs for simple objects:
+It is the recommended way to build template objects — write only the fields
+that differ from the default:
 
 ```python
 # Full default — just change what you need
@@ -334,7 +485,7 @@ img   = get_default_config("Image", {
     "left": 0.2, "top": 0.2, "width": 1.5,
 })
 
-# Available object types
+# Available object types:
 # "AutoShape", "Banner", "Connector", "Image", "Table", "Text", "Title"
 ```
 
@@ -407,14 +558,6 @@ show_dash_styles()     # solid, dash, dash dot, round dot, ...
 ```bash
 pip install python-pptx Pillow webcolors
 ```
-
----
-
-## Example Output
-
-The Professor Farnsworth slide generated by the Quick Start example:
-
-<img src="img/FuturamaProfessorFarnsworth.png" width="480">
 
 ---
 
