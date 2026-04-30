@@ -57,8 +57,9 @@ Wrapper Functions
     add_header              Add a slide header (title text box, connector, and seal images).
 
 High-level API
-    dispatch_objects        Render all enabled objects from an "Objects" config dict.
-    build_presentation      Build a complete Presentation from a slide_config dict.
+    dispatch_objects             Render all enabled objects from an "Objects" config dict.
+    build_presentation           Build a complete Presentation from a slide_config dict.
+    extract_presentation_config  Extract a slide_config dict from an existing Presentation.
 
 Helper Functions
     get_default_config      Return a deep-copied default config for a named object type.
@@ -91,7 +92,7 @@ __all__ = [
     # wrapper functions
     "add_banners", "add_header",
     # high-level API
-    "dispatch_objects", "build_presentation",
+    "dispatch_objects", "build_presentation", "extract_presentation_config",
     # helper functions
     "get_default_config", "apply_metadata",
     "show_functions", "show_autoshapes", "show_object_alignment",
@@ -110,7 +111,7 @@ import pptx
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
-from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_VERTICAL_ANCHOR, PP_ALIGN
 from pptx.parts.coreprops import CorePropertiesPart as CoreProperties
 from pptx.shapes.autoshape import Shape
@@ -198,6 +199,10 @@ PPTX_LOOKUP: Dict[str, Dict[str, Any]] = {
         "star 32-point":     MSO_SHAPE.STAR_32_POINT,
         "chevron":           MSO_SHAPE.CHEVRON,
         "pentagon":          MSO_SHAPE.PENTAGON,
+        "oval callout":      MSO_SHAPE.OVAL_CALLOUT,
+        "rounded callout":   MSO_SHAPE.ROUNDED_RECTANGULAR_CALLOUT,
+        "rectangular callout": MSO_SHAPE.RECTANGULAR_CALLOUT,
+        "cloud callout":     MSO_SHAPE.CLOUD_CALLOUT,
         "default":           MSO_SHAPE.RECTANGLE,
     },
 
@@ -207,6 +212,37 @@ PPTX_LOOKUP: Dict[str, Dict[str, Any]] = {
         "curved":   MSO_CONNECTOR.CURVE,
     },
 }
+
+# Reverse lookups used by extract_presentation_config
+_ALIGN_PREFERRED: Dict[Any, str] = {
+    PP_ALIGN.CENTER:      "center",
+    PP_ALIGN.LEFT:        "left",
+    PP_ALIGN.RIGHT:       "right",
+    PP_ALIGN.JUSTIFY:     "justify",
+    PP_ALIGN.JUSTIFY_LOW: "justify_low",
+}
+
+_VALIGN_PREFERRED: Dict[Any, str] = {
+    MSO_VERTICAL_ANCHOR.TOP:    "top",
+    MSO_VERTICAL_ANCHOR.MIDDLE: "middle",
+    MSO_VERTICAL_ANCHOR.BOTTOM: "bottom",
+}
+
+_DASH_PREFERRED: Dict[Any, str] = {
+    MSO_LINE_DASH_STYLE.SOLID:         "-",
+    MSO_LINE_DASH_STYLE.DASH:          "--",
+    MSO_LINE_DASH_STYLE.DASH_DOT:      "-.",
+    MSO_LINE_DASH_STYLE.DASH_DOT_DOT:  "-..",
+    MSO_LINE_DASH_STYLE.LONG_DASH:     "long dash",
+    MSO_LINE_DASH_STYLE.LONG_DASH_DOT: "long dash dot",
+    MSO_LINE_DASH_STYLE.ROUND_DOT:     ".",
+    MSO_LINE_DASH_STYLE.SQUARE_DOT:    "square dot",
+}
+
+_SHAPE_REVERSE: Dict[Any, str] = {
+    v: k for k, v in PPTX_LOOKUP["shapes"].items() if k != "default"
+}
+
 
 _SLIDE_TEMPLATES: Dict[str, str] = {
     "0": "Title Slide — title and subtitle placeholders.",
@@ -444,6 +480,23 @@ def add_autoshape(slide: Slide, config: Dict[str, Any]) -> Shape:
         left=left, top=top, width=width, height=height,
     )
     add_shape_formatting(shape, config)
+
+    # Optional: render text directly into the shape's text frame
+    if config.get("Text"):
+        tf = shape.text_frame
+        tf.word_wrap       = config.get("Word Wrap?", True)
+        tf.vertical_anchor = PPTX_LOOKUP["valign"].get(
+            config.get("V Align", "middle").lower(), MSO_VERTICAL_ANCHOR.MIDDLE
+        )
+        tf.clear()
+        p           = tf.paragraphs[0]
+        p.alignment = PPTX_LOOKUP["align"].get(
+            config.get("Align", "center").lower(), PP_ALIGN.CENTER
+        )
+        run      = p.add_run()
+        run.text = str(config["Text"])
+        add_text_formatting(run, config)
+
     return shape
 
 
@@ -518,7 +571,8 @@ def add_image(slide: Slide, config: Dict[str, Any]) -> Picture:
         Required keys: ``"img_path"``, ``"left"``, ``"top"``.
 
         Optional keys: ``"width"``, ``"height"``, ``"fit"``,
-        ``"Preserve Aspect Ratio?"``, ``"Line Width"``, ``"Line Color"``,
+        ``"Preserve Aspect Ratio?"``, ``"Flip Horizontal?"``,
+        ``"Flip Vertical?"``, ``"Line Width"``, ``"Line Color"``,
         ``"Line Style"``.
 
     Returns
@@ -572,6 +626,14 @@ def add_image(slide: Slide, config: Dict[str, Any]) -> Picture:
         picture.line.color.rgb  = RGBColor(*color_to_rgb(lc))
         picture.line.width      = Pt(lw)
         picture.line.dash_style = PPTX_LOOKUP["dash_styles"].get(ls, MSO_LINE_DASH_STYLE.SOLID)
+
+    # Flip / mirror
+    if config.get("Flip Horizontal?", False) or config.get("Flip Vertical?", False):
+        xfrm = picture.element.spPr.xfrm
+        if config.get("Flip Horizontal?", False):
+            xfrm.set("flipH", "1")
+        if config.get("Flip Vertical?", False):
+            xfrm.set("flipV", "1")
 
     return picture
 
@@ -692,6 +754,7 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
             Per-cell formatting overrides.  Keys are ``(row_index, col_index)``
             tuples (0-based, header row = 0).  Values are config dicts with any
             combination of ``"Font Color"``, ``"Font Size"``, ``"Bold?"``,
+            ``"V-Align"``,
             ``"Italic?"``, ``"Underline?"``, ``"Fill Color"``, ``"Align"``.
 
             Example::
@@ -729,13 +792,14 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
             if col_idx >= cols_count:
                 break
             cell: _Cell = table.cell(row_idx, col_idx)
-            cell.vertical_anchor = PPTX_LOOKUP["valign"].get(
-                valign_key, MSO_VERTICAL_ANCHOR.MIDDLE
-            )
 
             # Merge base config with any per-cell overrides
             override    = cell_styles.get((row_idx, col_idx), {})
             merged      = {**config, "Bold?": config.get("Bold?", row_idx == 0), **override}
+
+            cell.vertical_anchor = PPTX_LOOKUP["valign"].get(
+                merged.get("V-Align", valign_key).lower(), MSO_VERTICAL_ANCHOR.MIDDLE
+            )
             cell_align  = PPTX_LOOKUP["align"].get(
                 merged.get("Align", align_key).lower(), PP_ALIGN.LEFT
             )
@@ -747,7 +811,7 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
 
             tf = cell.text_frame
             tf.clear()
-            p           = tf.add_paragraph()
+            p           = tf.paragraphs[0]
             p.alignment = cell_align
             run         = p.add_run()
             run.text    = str(cell_value)
@@ -820,6 +884,15 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
 
     align_key = config.get("Align", "center").lower()
 
+    # tf.clear() leaves one empty paragraph behind; reuse it as the first
+    # paragraph rather than calling add_paragraph(), which would create a
+    # second paragraph and produce a blank leading line in every text box.
+    def _first_para():
+        return tf.paragraphs[0]
+
+    def _next_para():
+        return tf.add_paragraph()
+
     # ── Bulleted list ─────────────────────────────────────────────────────────
     if "Bullets" in config:
         font_size_raw = config.get("Font Size", 12)
@@ -833,19 +906,19 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
             font_size_map     = {}
             default_font_size = font_size_raw
 
-        for bullet_text, level in config["Bullets"]:
-            p          = tf.add_paragraph()
-            p.level    = level
+        for i, (bullet_text, level) in enumerate(config["Bullets"]):
+            p           = _first_para() if i == 0 else _next_para()
+            p.level     = level
             p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.LEFT)
-            run        = p.add_run()
-            run.text   = bullet_text
-            font_size  = font_size_map.get(level, default_font_size)
+            run         = p.add_run()
+            run.text    = bullet_text
+            font_size   = font_size_map.get(level, default_font_size)
             add_text_formatting(run, {**config, "Font Size": font_size})
 
     # ── Multi-paragraph ───────────────────────────────────────────────────────
     elif isinstance(config.get("Text"), list):
-        for para_content in config["Text"]:
-            p           = tf.add_paragraph()
+        for i, para_content in enumerate(config["Text"]):
+            p           = _first_para() if i == 0 else _next_para()
             p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.CENTER)
             if isinstance(para_content, dict):
                 for text, run_config in para_content.items():
@@ -859,7 +932,7 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
 
     # ── Multi-run text (single paragraph) ────────────────────────────────────
     elif isinstance(config.get("Text"), dict):
-        p           = tf.add_paragraph()
+        p           = _first_para()
         p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.CENTER)
         for text, run_config in config["Text"].items():
             run      = p.add_run()
@@ -868,7 +941,7 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
 
     # ── Plain text ────────────────────────────────────────────────────────────
     else:
-        p           = tf.add_paragraph()
+        p           = _first_para()
         p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.CENTER)
         run         = p.add_run()
         run.text    = str(config.get("Text", ""))
@@ -1090,6 +1163,401 @@ def build_presentation(
 
 
 ################################################################################
+# EXTRACTION HELPERS  (private)
+################################################################################
+
+_EMU_PER_INCH: int = 914400
+
+
+def _safe_hex(color_obj) -> Optional[str]:
+    """Return '#rrggbb' from a pptx color object, or None if the type is not RGB."""
+    try:
+        return f"#{str(color_obj.rgb).lower()}"
+    except Exception:
+        return None
+
+
+def _emu_to_in(emu) -> float:
+    """Convert EMU to inches, rounded to 4 decimal places."""
+    if emu is None:
+        return 0.0
+    return round(emu / _EMU_PER_INCH, 4)
+
+
+def _get_layout_index(slide: Slide) -> int:
+    """Return the slide layout index within its slide master, defaulting to 6 (Blank)."""
+    try:
+        sl = slide.slide_layout
+        for i, layout in enumerate(sl.slide_master.slide_layouts):
+            if layout._element is sl._element:
+                return i
+    except Exception:
+        pass
+    return 6
+
+
+def _extract_background(slide: Slide) -> Tuple[str, float]:
+    """Return (hex_color, alpha) from the slide's explicit background fill."""
+    try:
+        fill = slide.background.fill
+        if fill.type is not None:
+            c = _safe_hex(fill.fore_color)
+            if c:
+                alpha = 0.0
+                try:
+                    alpha = float(fill.fore_color.transparency or 0.0)
+                except Exception:
+                    pass
+                return c, alpha
+    except Exception:
+        pass
+    return "#ffffff", 0.0
+
+
+def _extract_notes_text(slide: Slide) -> str:
+    """Return stripped notes text from a slide."""
+    try:
+        return slide.notes_slide.notes_text_frame.text.strip()
+    except Exception:
+        return ""
+
+
+def _extract_font(font) -> Dict[str, Any]:
+    """Pull explicitly-set font properties into a partial config dict."""
+    out: Dict[str, Any] = {}
+    if font.name:
+        out["Font Name"] = font.name
+    if font.size:
+        try:
+            out["Font Size"] = round(font.size.pt, 1)
+        except Exception:
+            pass
+    if font.bold is not None:
+        out["Bold?"] = bool(font.bold)
+    if font.italic is not None:
+        out["Italic?"] = bool(font.italic)
+    if font.underline is not None:
+        out["Underline?"] = bool(font.underline)
+    c = _safe_hex(font.color)
+    if c:
+        out["Font Color"] = c
+    return out
+
+
+def _extract_line_props(shape) -> Dict[str, Any]:
+    """Return Line Color/Width/Style from a shape's line properties."""
+    out: Dict[str, Any] = {"Line Color": None, "Line Width": 0, "Line Style": "-"}
+    try:
+        line = shape.line
+        c = _safe_hex(line.color)
+        if c:
+            out["Line Color"] = c
+        if line.width:
+            out["Line Width"] = round(line.width.pt, 2)
+        if line.dash_style is not None:
+            out["Line Style"] = _DASH_PREFERRED.get(line.dash_style, "-")
+    except Exception:
+        pass
+    return out
+
+
+def _extract_fill_props(shape) -> Dict[str, Any]:
+    """Return Fill Color/Alpha from a shape's fill properties."""
+    out: Dict[str, Any] = {"Fill Color": None, "Fill Alpha": 1.0}
+    try:
+        fill = shape.fill
+        if fill.type is not None:
+            c = _safe_hex(fill.fore_color)
+            if c:
+                out["Fill Color"] = c
+    except Exception:
+        pass
+    return out
+
+
+def _extract_text_config(shape) -> Dict[str, Any]:
+    """Extract a Text object config from any shape with a text frame."""
+    tf = shape.text_frame
+
+    font_props = {
+        "Font Name": "Calibri", "Font Size": 12.0, "Font Color": "#535353",
+        "Bold?": False, "Italic?": False, "Underline?": False,
+    }
+    align   = "left"
+    v_align = "middle"
+
+    try:
+        v_anchor = tf.vertical_anchor
+        if v_anchor is not None:
+            v_align = _VALIGN_PREFERRED.get(v_anchor, "middle")
+    except Exception:
+        pass
+
+    for para in tf.paragraphs:
+        if para.alignment:
+            align = _ALIGN_PREFERRED.get(para.alignment, "left")
+        font = para.runs[0].font if para.runs else para.font
+        font_props.update(_extract_font(font))
+        if para.text.strip():
+            break
+
+    text = "\n".join(p.text for p in tf.paragraphs).strip()
+
+    config: Dict[str, Any] = {
+        "Add?":        True,
+        "Object Type": "Text",
+        "Text":        text,
+        "left":   _emu_to_in(shape.left),
+        "top":    _emu_to_in(shape.top),
+        "width":  _emu_to_in(shape.width),
+        "height": _emu_to_in(shape.height),
+        "Align":      align,
+        "V Align":    v_align,
+        "Word Wrap?": bool(tf.word_wrap) if tf.word_wrap is not None else True,
+    }
+    config.update(font_props)
+    config.update(_extract_fill_props(shape))
+    config.update(_extract_line_props(shape))
+    return config
+
+
+def _extract_image_config(shape) -> Dict[str, Any]:
+    """Extract an Image object config; img_path is null (content placeholder)."""
+    return {
+        "Add?":                   True,
+        "Object Type":            "Image",
+        "img_path":               None,
+        "Preserve Aspect Ratio?": True,
+        "fit":                    "width",
+        "left":   _emu_to_in(shape.left),
+        "top":    _emu_to_in(shape.top),
+        "width":  _emu_to_in(shape.width),
+        "height": _emu_to_in(shape.height),
+    }
+
+
+def _extract_connector_config(shape) -> Dict[str, Any]:
+    """Extract a Connector object config, accounting for flip orientation."""
+    left  = _emu_to_in(shape.left)
+    top   = _emu_to_in(shape.top)
+    right = _emu_to_in(shape.left + shape.width)
+    bot   = _emu_to_in(shape.top  + shape.height)
+
+    start_x, end_x = left, right
+    start_y, end_y = top,  bot
+    try:
+        xfrm = shape.element.spPr.xfrm
+        if xfrm.flipH:
+            start_x, end_x = end_x, start_x
+        if xfrm.flipV:
+            start_y, end_y = end_y, start_y
+    except Exception:
+        pass
+
+    lp = _extract_line_props(shape)
+    return {
+        "Add?":        True,
+        "Object Type": "Connector",
+        "Type":        "straight",
+        "Start X": start_x, "Start Y": start_y,
+        "End X":   end_x,   "End Y":   end_y,
+        "Line Color": lp.get("Line Color") or "#000000",
+        "Line Width": lp.get("Line Width", 1),
+        "Line Style": lp.get("Line Style", "-"),
+    }
+
+
+def _extract_autoshape_config(shape) -> Dict[str, Any]:
+    """Extract an AutoShape object config, including text if present."""
+    try:
+        shape_key = _SHAPE_REVERSE.get(shape.auto_shape_type, "rectangle")
+    except Exception:
+        shape_key = "rectangle"
+
+    config: Dict[str, Any] = {
+        "Add?":          True,
+        "Object Type":   "AutoShape",
+        "AutoShape Key": shape_key,
+        "left":   _emu_to_in(shape.left),
+        "top":    _emu_to_in(shape.top),
+        "width":  _emu_to_in(shape.width),
+        "height": _emu_to_in(shape.height),
+    }
+    config.update(_extract_fill_props(shape))
+    config.update(_extract_line_props(shape))
+
+    if shape.has_text_frame and shape.text_frame.text.strip():
+        tf = shape.text_frame
+        font_props = {
+            "Font Name": "Calibri", "Font Size": 12.0, "Font Color": "#535353",
+            "Bold?": False, "Italic?": False,
+        }
+        align   = "center"
+        v_align = "middle"
+        try:
+            v_anchor = tf.vertical_anchor
+            if v_anchor is not None:
+                v_align = _VALIGN_PREFERRED.get(v_anchor, "middle")
+        except Exception:
+            pass
+        for para in tf.paragraphs:
+            if para.alignment:
+                align = _ALIGN_PREFERRED.get(para.alignment, "center")
+            font = para.runs[0].font if para.runs else para.font
+            font_props.update(_extract_font(font))
+            if para.text.strip():
+                break
+        config["Text"]      = "\n".join(p.text for p in tf.paragraphs).strip()
+        config["Align"]     = align
+        config["V Align"]   = v_align
+        config["Word Wrap?"] = bool(tf.word_wrap) if tf.word_wrap is not None else True
+        config.update(font_props)
+
+    return config
+
+
+def _extract_table_config(shape) -> Dict[str, Any]:
+    """Extract a Table object config including headers and row data."""
+    table   = shape.table
+    n_rows  = len(table.rows)
+    n_cols  = len(table.columns)
+
+    col_widths = [_emu_to_in(col.width) for col in table.columns]
+    row_height = _emu_to_in(table.rows[0].height) if table.rows else 0.4
+
+    all_data = [
+        [cell.text_frame.text.strip() for cell in row.cells]
+        for row in table.rows
+    ]
+    headers  = all_data[0]      if all_data           else []
+    row_data = all_data[1:]     if len(all_data) > 1  else []
+
+    font_props = {
+        "Font Name": "Calibri", "Font Size": 10.0,
+        "Font Color": "#333333", "Bold?": False,
+    }
+    align = "center"
+    try:
+        para = table.cell(0, 0).text_frame.paragraphs[0]
+        if para.alignment:
+            align = _ALIGN_PREFERRED.get(para.alignment, "center")
+        font = para.runs[0].font if para.runs else para.font
+        font_props.update(_extract_font(font))
+    except Exception:
+        pass
+
+    config: Dict[str, Any] = {
+        "Add?":           True,
+        "Object Type":    "Table",
+        "left":   _emu_to_in(shape.left),
+        "top":    _emu_to_in(shape.top),
+        "width":  _emu_to_in(shape.width),
+        "height": _emu_to_in(shape.height),
+        "Rows":           max(0, n_rows - 1),
+        "Columns":        n_cols,
+        "Column Widths":  col_widths,
+        "Row Height":     row_height,
+        "Column Headers": headers,
+        "Row Data":       row_data,
+        "Align":          align,
+        "V-Align":        "middle",
+    }
+    config.update(font_props)
+    return config
+
+
+def _extract_objects(slide: Slide) -> Dict[str, Any]:
+    """Extract all non-placeholder shapes from a slide into an Objects config dict."""
+    from pptx.shapes.connector import Connector as _Conn
+    from pptx.shapes.picture   import Picture   as _Pic
+
+    objects: Dict[str, Any] = {}
+    for shape in slide.shapes:
+        if shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER:
+            continue
+        name = shape.name
+        if isinstance(shape, _Pic):
+            objects[name] = _extract_image_config(shape)
+        elif isinstance(shape, _Conn):
+            objects[name] = _extract_connector_config(shape)
+        elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+            objects[name] = _extract_table_config(shape)
+        elif shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+            objects[name] = _extract_autoshape_config(shape)
+        elif shape.shape_type == MSO_SHAPE_TYPE.TEXT_BOX:
+            objects[name] = _extract_text_config(shape)
+    return objects
+
+
+def extract_presentation_config(prs) -> Dict[str, Any]:
+    """
+    Extract a slide_config dict from an existing Presentation.
+
+    Captures all layout and formatting properties.  Image ``img_path`` values
+    are set to ``None`` — they are content, not structure — making the result
+    ready to use as a template: inject new paths (and update ``"Text"``
+    strings) then pass to :func:`build_presentation`.
+
+    Parameters
+    ----------
+    prs : Presentation or str
+        An opened python-pptx Presentation object, or a file path string to a
+        ``.pptx`` file which will be opened automatically.
+
+    Returns
+    -------
+    dict
+        A ``slide_config`` dict compatible with :func:`build_presentation`.
+
+    Examples
+    --------
+    >>> from pptx_functions import extract_presentation_config, build_presentation
+    >>> template = extract_presentation_config("existing.pptx")
+    >>> template["Slides"]["Slide 01"]["Objects"]["Hero Image"]["img_path"] = "new.png"
+    >>> prs = build_presentation(template)
+    >>> prs.save("output.pptx")
+    """
+    if isinstance(prs, str):
+        prs = Presentation(prs)
+    cp      = prs.core_properties
+    slide_w = round(prs.slide_width.inches,  4)
+    slide_h = round(prs.slide_height.inches, 4)
+    ratio   = slide_w / slide_h
+    if   abs(ratio - 16 / 9) < 0.02:  aspect = "16:9"
+    elif abs(ratio - 4  / 3) < 0.02:  aspect = "4:3"
+    else:                              aspect = f"{ratio:.3f}:1"
+
+    config: Dict[str, Any] = {
+        "Details": {
+            "Author":               cp.author   or "",
+            "Title":                cp.title    or "",
+            "Subject":              cp.subject  or "",
+            "Comments":             cp.comments or "",
+            "Keywords":             cp.keywords or "",
+            "Category":             cp.category or "",
+            "Filename":             "extracted_template.pptx",
+            "Slide Aspect Ratio":   aspect,
+            "Slide Width & Height": [slide_w, slide_h],
+        },
+        "Slides": {},
+    }
+
+    for idx, slide in enumerate(prs.slides, start=1):
+        key                  = f"Slide {idx:02d}"
+        bg_color, bg_alpha   = _extract_background(slide)
+        config["Slides"][key] = {
+            "Slide Template":   _get_layout_index(slide),
+            "Slide Name":       key,
+            "Slide Notes":      _extract_notes_text(slide),
+            "Background Color": bg_color,
+            "Background Alpha": bg_alpha,
+            "Objects":          _extract_objects(slide),
+        }
+
+    return config
+
+
+################################################################################
 # HELPER FUNCTIONS
 ################################################################################
 
@@ -1200,6 +1668,7 @@ def show_functions() -> None:
         "High-level API": [
             "dispatch_objects(slide, objects_config)",
             "build_presentation(slide_config, verbose=False)",
+            "extract_presentation_config(prs)",
         ],
         "Helper Functions": [
             "get_default_config(object_type, overrides=None)",
