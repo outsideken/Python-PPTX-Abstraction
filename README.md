@@ -209,7 +209,7 @@ objs["Mission Log"]["Rows"]     = len(llm_output["rows"])
 # Post-process: colour-code the Danger Level column from the LLM's values
 danger_colors = {"High": "#cb181d", "Medium": "#e6a817", "Low": "#007a33"}
 for i, row in enumerate(llm_output["rows"], start=1):
-    objs["Mission Log"]["Cell Styles"][(i, 3)] = {
+    objs["Mission Log"]["Cell Styles"][f"{i},3"] = {
         "Font Color": danger_colors.get(row[3], "#535353"),
         "Bold?": True,
     }
@@ -413,7 +413,7 @@ strings or mixed-format run dicts:
 ### Text Box — bulleted list
 
 `"Font Size"` can be a scalar or a `[[level, size], ...]` list for
-per-indent sizing:
+per-indent sizing.  `"Bullet Char"` sets the bullet symbol (default `"•"`):
 
 ```python
 "Bullets": {
@@ -427,10 +427,11 @@ per-indent sizing:
         ["Activity concentrated 0200–0600Z",    1],
     ],
     "left": 0.5, "top": 1.2, "width": 6.0, "height": 5.5,
-    "Font Name":  "Calibri",
-    "Font Size":  [[0, 14], [1, 11]],
-    "Font Color": "#252525",
-    "Align":      "left",
+    "Font Name":   "Calibri",
+    "Font Size":   [[0, 14], [1, 11]],
+    "Font Color":  "#252525",
+    "Align":       "left",
+    "Bullet Char": "•",     # "–", "›", "▸", "○" also work
 }
 ```
 
@@ -534,10 +535,10 @@ be overridden per-cell via `"Cell Styles"`:
     "Align":      "center",
     "V-Align":    "middle",
     "Cell Styles": {
-        (0, 3): {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
-        (1, 3): {"Font Color": "#007a33", "Bold?": True},
-        (2, 3): {"Font Color": "#e6a817", "Bold?": True},
-        (3, 3): {"Font Color": "#cb181d", "Bold?": True},
+        "0,3": {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
+        "1,3": {"Font Color": "#007a33", "Bold?": True},
+        "2,3": {"Font Color": "#e6a817", "Bold?": True},
+        "3,3": {"Font Color": "#cb181d", "Bold?": True},
     },
 }
 ```
@@ -581,7 +582,7 @@ img = get_default_config("Image", {
     "left": 0.2, "top": 0.2, "width": 1.5,
 })
 
-# Available types: "AutoShape", "Connector", "Image", "Table", "Text", "Title"
+# Available types: "AutoShape", "Banner", "Connector", "Header", "Image", "Table", "Text", "Title"
 ```
 
 ---

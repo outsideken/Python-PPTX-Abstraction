@@ -103,6 +103,7 @@ __all__ = [
 
 import os
 from copy import deepcopy
+from lxml import etree
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -363,6 +364,18 @@ def _get_slide_size(slide: Slide) -> Tuple[float, float]:
     """Return (width_inches, height_inches) from the slide's parent Presentation."""
     prs = slide.part.package.presentation_part.presentation
     return prs.slide_width.inches, prs.slide_height.inches
+
+
+_DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+def _enable_bullet(p, char: str = "•") -> None:
+    """Inject <a:buChar> into a paragraph's pPr to turn on bullet rendering."""
+    pPr = p._p.get_or_add_pPr()
+    for tag in ("buNone", "buAutoNum", "buChar"):
+        for el in pPr.findall(f"{{{_DML_NS}}}{tag}"):
+            pPr.remove(el)
+    bu = etree.SubElement(pPr, f"{{{_DML_NS}}}buChar")
+    bu.set("char", char)
 
 
 def set_slide_background(slide: Slide, config: Dict[str, Any]) -> None:
@@ -751,8 +764,8 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
         ``"Bold?"`` (bool, optional)
             ``True`` bolds all cells; header row is bold by default.
         ``"Cell Styles"`` (dict, optional)
-            Per-cell formatting overrides.  Keys are ``(row_index, col_index)``
-            tuples (0-based, header row = 0).  Values are config dicts with any
+            Per-cell formatting overrides.  Keys are ``"row,col"`` strings
+            (0-based, header row = 0).  Values are config dicts with any
             combination of ``"Font Color"``, ``"Font Size"``, ``"Bold?"``,
             ``"V-Align"``,
             ``"Italic?"``, ``"Underline?"``, ``"Fill Color"``, ``"Align"``.
@@ -760,8 +773,8 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
             Example::
 
                 "Cell Styles": {
-                    (0, 2): {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
-                    (2, 3): {"Font Color": "#cb181d", "Bold?": True},
+                    "0,2": {"Font Color": "#ffffff", "Fill Color": "#1a1a2e"},
+                    "2,3": {"Font Color": "#cb181d", "Bold?": True},
                 }
 
     Returns
@@ -794,7 +807,7 @@ def add_table(slide: Slide, config: Dict[str, Any]) -> Table:
             cell: _Cell = table.cell(row_idx, col_idx)
 
             # Merge base config with any per-cell overrides
-            override    = cell_styles.get((row_idx, col_idx), {})
+            override    = cell_styles.get(f"{row_idx},{col_idx}", {})
             merged      = {**config, "Bold?": config.get("Bold?", row_idx == 0), **override}
 
             cell.vertical_anchor = PPTX_LOOKUP["valign"].get(
@@ -853,6 +866,9 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
             Text content.  Required unless ``"Bullets"`` is provided.
         ``"Bullets"`` (list of [str, int], optional)
             Overrides ``"Text"``; drives bulleted-list mode.
+        ``"Bullet Char"`` (str, optional)
+            Character used as the bullet symbol.  Default ``"•"``.
+            Common alternatives: ``"–"``, ``"›"``, ``"▸"``, ``"○"``.
         ``"Align"`` (str, optional)
             Horizontal alignment.  Default ``"center"``.
         ``"V Align"`` (str, optional)
@@ -895,6 +911,7 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
 
     # ── Bulleted list ─────────────────────────────────────────────────────────
     if "Bullets" in config:
+        bullet_char   = config.get("Bullet Char", "•")
         font_size_raw = config.get("Font Size", 12)
         if isinstance(font_size_raw, (list, tuple)):
             font_size_map     = dict(font_size_raw)
@@ -910,6 +927,7 @@ def add_textbox(slide: Slide, config: Dict[str, Any]) -> Shape:
             p           = _first_para() if i == 0 else _next_para()
             p.level     = level
             p.alignment = PPTX_LOOKUP["align"].get(align_key, PP_ALIGN.LEFT)
+            _enable_bullet(p, bullet_char)
             run         = p.add_run()
             run.text    = bullet_text
             font_size   = font_size_map.get(level, default_font_size)
@@ -1571,8 +1589,8 @@ def get_default_config(
     Parameters
     ----------
     object_type : str
-        One of: ``"AutoShape"``, ``"Banner"``, ``"Connector"``, ``"Image"``,
-        ``"Table"``, ``"Text"``, ``"Title"``.
+        One of: ``"AutoShape"``, ``"Banner"``, ``"Connector"``, ``"Header"``,
+        ``"Image"``, ``"Table"``, ``"Text"``, ``"Title"``.
     overrides : dict, optional
         Keys to update on top of the defaults.  The defaults are not mutated.
 
@@ -1739,6 +1757,13 @@ default_configurations: Dict[str, Dict[str, Any]] = {
         "left": 3.0,  "top": 3.0, "width": 4.0, "height": 2.5,
         "Fill Color":  "#6A0DAD", "Fill Alpha": 1.0,
         "Line Color":  "#FFA500", "Line Width": 2.5, "Line Style": "dash",
+        "Text":        "",
+        "Align":       "center",
+        "V Align":     "middle",
+        "Font Name":   "Calibri",
+        "Font Size":   18,
+        "Font Color":  "#535353",
+        "Bold?": False, "Italic?": False, "Underline?": False, "Word Wrap?": True,
     },
 
     "Banner": {
@@ -1762,6 +1787,33 @@ default_configurations: Dict[str, Dict[str, Any]] = {
         "Type":        "straight",
         "Start X": 1.5, "Start Y": 1.0, "End X": 8.5, "End Y": 1.0,
         "Line Color": "#535353", "Line Width": 2, "Line Style": "-",
+    },
+
+    "Header": {
+        "Add?":        True,
+        "Object Type": "Header",
+        "Text":        "Slide Title",
+        "Add Right Image?": True,
+        "Header Connector": {
+            "Type":       "straight",
+            "Start X": 0.5, "Start Y": 0.85,
+            "End X":   12.83, "End Y": 0.85,
+            "Line Color": "#535353", "Line Width": 1.5, "Line Style": "-",
+        },
+        "Left Seal": {
+            "img_path": "",
+            "Preserve Aspect Ratio?": True,
+            "fit":   "height",
+            "left":  0.1,  "top": 0.05, "width": 0.7, "height": 0.7,
+            "Line Width": 0,
+        },
+        "Right Seal": {
+            "img_path": "",
+            "Preserve Aspect Ratio?": True,
+            "fit":   "height",
+            "left":  12.53, "top": 0.05, "width": 0.7, "height": 0.7,
+            "Line Width": 0,
+        },
     },
 
     "Image": {
